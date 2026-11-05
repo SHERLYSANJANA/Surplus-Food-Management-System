@@ -1,0 +1,80 @@
+import re
+import streamlit as st
+import ui
+import pandas as pd
+from psycopg import errors
+from db import get_connected
+
+ui.page_header("🛠️", "SQL Operations", "Demonstration of SELECT, UPDATE and DELETE.")
+
+PHONE_RE = re.compile(r"^\+?\d{10,15}$")
+
+tab1, tab2, tab3 = st.tabs(["View Donors", "Update Donor", "Delete Donor"])
+
+with tab1:
+    st.subheader("All Donors")
+    if st.button("Load Donors"):
+        try:
+            with get_connected() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        SELECT donor_id, donor_name, donor_location, email_id, phone_no
+                        FROM donor ORDER BY donor_id
+                    """)
+                    rows = cur.fetchall()
+            st.dataframe(
+                pd.DataFrame(rows, columns=["ID", "Name", "Location", "Email", "Phone"]),
+                width="stretch",
+            )
+        except Exception as e:
+            st.error(f"Error: {e}")
+
+with tab2:
+    st.subheader("Update Donor Details")
+    donor_id = st.number_input("Donor ID", min_value=1, step=1, key="update_id")
+    new_location = st.text_input("New Location", key="new_location")
+    new_phone = st.text_input("New Phone Number", key="new_phone")
+    if st.button("Update Donor"):
+        if not new_location.strip() or not new_phone.strip():
+            st.warning("Enter both the new location and phone number.")
+        elif not PHONE_RE.match(new_phone.strip()):
+            st.warning("Phone number must be 10-15 digits (optional leading +).")
+        else:
+            try:
+                with get_connected() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("""
+                            UPDATE donor SET donor_location = %s, phone_no = %s
+                            WHERE donor_id = %s RETURNING donor_id
+                        """, (new_location.strip(), new_phone.strip(), int(donor_id)))
+                        updated = cur.fetchone()
+                if updated:
+                    st.success("Donor updated successfully!")
+                else:
+                    st.warning("No donor found with that ID.")
+            except Exception as e:
+                st.error(f"Update failed: {e}")
+
+with tab3:
+    st.subheader("Delete Donor")
+    st.warning("Deletion fails if the donor has linked donations.")
+    delete_id = st.number_input("Donor ID to delete", min_value=1, step=1, key="delete_id")
+    confirm = st.checkbox("I confirm that I want to delete this donor.")
+    if st.button("Delete Donor"):
+        if not confirm:
+            st.warning("Please confirm the deletion.")
+        else:
+            try:
+                with get_connected() as conn:
+                    with conn.cursor() as cur:
+                        cur.execute("DELETE FROM donor WHERE donor_id = %s RETURNING donor_id",
+                                    (int(delete_id),))
+                        deleted = cur.fetchone()
+                if deleted:
+                    st.success("Donor deleted successfully.")
+                else:
+                    st.warning("No donor found with that ID.")
+            except errors.ForeignKeyViolation:
+                st.error("Cannot delete: this donor has linked donations.")
+            except Exception as e:
+                st.error(f"Deletion failed: {e}")
